@@ -1,0 +1,108 @@
+name: 'Parse Cloud Provider Cluster'
+description: 'Parses cloud provider/account/location/cluster format'
+author: 'KoalaOps'
+
+branding:
+  icon: 'map-pin'
+  color: 'purple'
+
+inputs:
+  cloud_provider_cluster:
+    description: 'Cloud provider and cluster in format: provider/account/location/cluster (e.g., aws/123456789012/us-east-1/prod-cluster)'
+    required: true
+
+outputs:
+  provider:
+    description: 'Cloud provider (aws, gcp, azure)'
+    value: ${{ steps.parse.outputs.provider }}
+  account:
+    description: 'Account/Project ID'
+    value: ${{ steps.parse.outputs.account }}
+  location:
+    description: 'Region/Location'
+    value: ${{ steps.parse.outputs.location }}
+  cluster:
+    description: 'Cluster name'
+    value: ${{ steps.parse.outputs.cluster }}
+  registry:
+    description: 'Default container registry for this cloud provider'
+    value: ${{ steps.parse.outputs.registry }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Parse cloud provider cluster
+      id: parse
+      shell: bash
+      run: |
+        CLOUD_SPEC="${{ inputs.cloud_provider_cluster }}"
+        echo "📍 Parsing cloud provider cluster: $CLOUD_SPEC"
+        
+        # Validate format (must have exactly 4 parts)
+        IFS='/' read -ra PARTS <<< "$CLOUD_SPEC"
+        if [ ${#PARTS[@]} -ne 4 ]; then
+          echo "::error::Invalid cloud provider cluster format. Expected: provider/account/location/cluster, got: $CLOUD_SPEC"
+          exit 1
+        fi
+        
+        PROVIDER="${PARTS[0]}"
+        ACCOUNT="${PARTS[1]}"
+        LOCATION="${PARTS[2]}"
+        CLUSTER="${PARTS[3]}"
+        
+        # Validate provider
+        case "$PROVIDER" in
+          aws|gcp|azure)
+            echo "✅ Valid provider: $PROVIDER"
+            ;;
+          *)
+            echo "::error::Invalid cloud provider: $PROVIDER. Must be one of: aws, gcp, azure"
+            exit 1
+            ;;
+        esac
+        
+        # Set outputs
+        echo "provider=$PROVIDER" >> $GITHUB_OUTPUT
+        echo "account=$ACCOUNT" >> $GITHUB_OUTPUT
+        echo "location=$LOCATION" >> $GITHUB_OUTPUT
+        echo "cluster=$CLUSTER" >> $GITHUB_OUTPUT
+        
+        # Determine default registry based on provider
+        case "$PROVIDER" in
+          aws)
+            REGISTRY="${ACCOUNT}.dkr.ecr.${LOCATION}.amazonaws.com"
+            ;;
+          gcp)
+            # Determine GCP registry based on location
+            if [[ "$LOCATION" == us-* ]]; then
+              REGISTRY="us-docker.pkg.dev/${ACCOUNT}"
+            elif [[ "$LOCATION" == europe-* ]]; then
+              REGISTRY="europe-docker.pkg.dev/${ACCOUNT}"
+            elif [[ "$LOCATION" == asia-* ]]; then
+              REGISTRY="asia-docker.pkg.dev/${ACCOUNT}"
+            else
+              REGISTRY="${LOCATION}-docker.pkg.dev/${ACCOUNT}"
+            fi
+            ;;
+          azure)
+            # Azure Container Registry format
+            REGISTRY="${ACCOUNT}.azurecr.io"
+            ;;
+        esac
+        
+        echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
+        
+        # Summary
+        echo "📋 Parsed values:"
+        echo "  Provider: $PROVIDER"
+        echo "  Account: $ACCOUNT"
+        echo "  Location: $LOCATION"
+        echo "  Cluster: $CLUSTER"
+        echo "  Registry: $REGISTRY"
+        
+        # Add to environment for convenience
+        echo "CLOUD_PROVIDER=$PROVIDER" >> $GITHUB_ENV
+        echo "CLOUD_ACCOUNT=$ACCOUNT" >> $GITHUB_ENV
+        echo "CLOUD_LOCATION=$LOCATION" >> $GITHUB_ENV
+        echo "CLOUD_CLUSTER=$CLUSTER" >> $GITHUB_ENV
+        echo "CLOUD_REGISTRY=$REGISTRY" >> $GITHUB_ENV
